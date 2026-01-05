@@ -1,0 +1,6 @@
+akshare
+google-genai
+tavily-python
+python-dotenv
+pandas
+openai
