@@ -9,16 +9,16 @@ Post-Market Analyst - 专业级盘后复盘系统
 5. 明日展望
 """
 
-import json
 import sys
 import os
 from typing import List, Dict
 from datetime import datetime, timedelta
+import pandas as pd
 
 # Add project root to sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from config.settings import FUNDS_FILE
+from src.analysis.base_analyst import BaseAnalyst
 from src.data_sources.akshare_api import (
     get_fund_info,
     get_fund_holdings,
@@ -33,93 +33,33 @@ from src.llm.client import get_llm_client
 from src.llm.prompts import POST_MARKET_PROMPT_TEMPLATE
 
 
-class PostMarketAnalyst:
+class PostMarketAnalyst(BaseAnalyst):
     """
     专业级盘后复盘分析师
     模拟基金经理团队的收盘后复盘流程
     """
     
+    SYSTEM_TITLE = "盘后复盘系统启动"
+    FAILURE_SUFFIX = "复盘失败"
+
     def __init__(self):
-        self.web_search = WebSearch()
-        self.llm = get_llm_client()
-        self.funds = self._load_funds()
-        
+        super().__init__()
+
+    def _compute_today(self) -> str:
         # Determine analysis date based on market hours
         # If before 15:00, analyze yesterday's close
         # If after 15:00, analyze today's close
         now = datetime.now()
         if now.hour < 15:
-            self.today = (now - timedelta(days=1)).strftime("%Y-%m-%d")
-        else:
-            self.today = now.strftime("%Y-%m-%d")
-            
-        self.sources = []  # 数据来源追踪
+            return (now - timedelta(days=1)).strftime("%Y-%m-%d")
+        return now.strftime("%Y-%m-%d")
 
-    def _load_funds(self) -> List[Dict]:
-        if not os.path.exists(FUNDS_FILE):
-            print(f"Warning: Funds file not found at {FUNDS_FILE}")
-            return []
-        with open(FUNDS_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-
-    # =========================================================================
-    # Source Tracking Utilities
-    # =========================================================================
-    
-    def _reset_sources(self):
-        """每次分析新基金前重置来源列表"""
-        self.sources = []
-    
-    def _add_source(self, category: str, title: str, url: str = None, source_name: str = None):
-        """添加一个数据来源"""
-        source_entry = {
-            'category': category,
-            'title': title[:100] if title else 'N/A',
-            'url': url,
-            'source': source_name
-        }
-        # 避免重复
-        if not any(s['title'] == source_entry['title'] and s['url'] == source_entry['url'] for s in self.sources):
-            self.sources.append(source_entry)
-    
-    def _format_sources(self) -> str:
-        """格式化数据来源为报告附录"""
-        if not self.sources:
-            return ""
-        
-        output = []
-        output.append("\n\n---")
-        output.append("\n## 📚 数据来源 (Sources Used in This Report)")
-        
-        # 按类别分组
-        categories = {}
-        for source in self.sources:
-            cat = source['category']
-            if cat not in categories:
-                categories[cat] = []
-            categories[cat].append(source)
-        
-        # 格式化输出
-        for cat, items in categories.items():
-            output.append(f"\n### {cat}")
-            for i, item in enumerate(items, 1):
-                title = item['title']
-                url = item['url']
-                source_name = item.get('source', '')
-                
-                if url:
-                    output.append(f"{i}. [{title}]({url})")
-                else:
-                    source_suffix = f" - {source_name}" if source_name else ""
-                    output.append(f"{i}. {title}{source_suffix}")
-        
-        # 固定数据源说明
-        output.append("\n### 📊 市场数据来源")
-        output.append("- AkShare: A股指数、北向资金、行业资金流向、个股行情")
-        output.append("- 东方财富: 基金净值、持仓数据")
-        output.append("- Tavily Search API: 实时新闻搜索")
-        
-        return "\n".join(output)
+    def _market_data_sources_section_lines(self) -> List[str]:
+        return [
+            "- AkShare: A股指数、北向资金、行业资金流向、个股行情",
+            "- 东方财富: 基金净值、持仓数据",
+            "- Tavily Search API: 实时新闻搜索",
+        ]
 
     # =========================================================================
     # 数据收集模块
@@ -162,9 +102,21 @@ class PostMarketAnalyst:
         
         output = []
         latest = fund_df.iloc[0]
+
+        nav_date = latest.get('净值日期', 'N/A')
+        try:
+            nav_date_norm = pd.to_datetime(nav_date, errors='coerce')
+            nav_date_str = nav_date_norm.strftime('%Y-%m-%d') if not pd.isna(nav_date_norm) else str(nav_date)
+        except Exception:
+            nav_date_str = str(nav_date)
+
+        # If NAV isn't updated to the analysis date, make it explicit in the report.
+        # Funds often publish NAV in the evening; at 15:00+ it may still be yesterday.
+        if self.today and nav_date_str and nav_date_str != self.today:
+            output.append(f"⚠️ 当日净值可能尚未披露：分析日 {self.today}，当前最新净值日期 {nav_date_str}（以下展示为最近可用净值）")
         
         output.append("**基金净值:**")
-        output.append(f"- 净值日期: {latest.get('净值日期', 'N/A')}")
+        output.append(f"- 净值日期: {nav_date_str}")
         output.append(f"- 单位净值: {latest.get('单位净值', 'N/A')}")
         output.append(f"- 日增长率: {latest.get('日增长率', 'N/A')}%")
         
@@ -173,6 +125,11 @@ class PostMarketAnalyst:
             output.append("\n**近5日走势:**")
             for i, row in fund_df.head(5).iterrows():
                 date = row.get('净值日期', 'N/A')
+                try:
+                    date_norm = pd.to_datetime(date, errors='coerce')
+                    date = date_norm.strftime('%Y-%m-%d') if not pd.isna(date_norm) else date
+                except Exception:
+                    pass
                 nav = row.get('单位净值', 'N/A')
                 change = row.get('日增长率', 'N/A')
                 output.append(f"- {date}: {nav} ({change}%)")
@@ -288,8 +245,6 @@ class PostMarketAnalyst:
         
         return "\n".join(output) if output else "暂无相关盘中新闻"
         
-        return "\n".join(output) if output else "暂无相关盘中新闻"
-
     def collect_sector_data(self, fund_focus: List[str]) -> str:
         """收集相关板块表现"""
         print("  🏢 分析相关板块...")
@@ -368,38 +323,6 @@ class PostMarketAnalyst:
         print(f"  📚 收集到 {len(self.sources)} 个数据来源")
         print("  ✅ 复盘完成")
         return report
-
-    def run_all(self) -> str:
-        """
-        运行所有基金的盘后复盘
-        """
-        print(f"\n{'#'*60}")
-        print(f"# 盘后复盘系统启动 - {self.today}")
-        print(f"# 待分析基金数量: {len(self.funds)}")
-        print(f"{'#'*60}")
-        
-        reports = []
-        for fund in self.funds:
-            try:
-                report = self.analyze_fund(fund)
-                if report:
-                    reports.append(report)
-            except Exception as e:
-                print(f"  ❌ 分析失败: {e}")
-                reports.append(f"## {fund.get('name')} 复盘失败\n错误: {str(e)}")
-        
-        return "\n\n---\n\n".join(reports)
-
-    def run_one(self, fund_code: str) -> str:
-        """
-        运行指定基金的盘后复盘
-        """
-        target_fund = next((f for f in self.funds if f["code"] == fund_code), None)
-        if not target_fund:
-            return f"Error: Fund with code {fund_code} not found in configuration."
-        
-        return self.analyze_fund(target_fund)
-
 
 if __name__ == "__main__":
     analyst = PostMarketAnalyst()

@@ -9,7 +9,6 @@ Pre-Market Analyst - 专业级盘前情报系统
 5. 信号汇总与交叉验证
 """
 
-import json
 import sys
 import os
 from typing import List, Dict, Optional
@@ -18,7 +17,7 @@ from datetime import datetime
 # Add project root to sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from config.settings import FUNDS_FILE
+from src.analysis.base_analyst import BaseAnalyst
 from src.data_sources.akshare_api import (
     get_fund_holdings,
     get_market_indices,
@@ -34,84 +33,24 @@ from src.llm.client import get_llm_client
 from src.llm.prompts import PRE_MARKET_PROMPT_TEMPLATE
 
 
-class PreMarketAnalyst:
+class PreMarketAnalyst(BaseAnalyst):
     """
     专业级盘前分析师
     模拟基金经理团队的晨会研究流程
     """
     
-    def __init__(self):
-        self.web_search = WebSearch()
-        self.llm = get_llm_client()
-        self.funds = self._load_funds()
-        self.today = datetime.now().strftime("%Y-%m-%d")
-        self.sources = []  # 数据来源追踪
-        
-    def _load_funds(self) -> List[Dict]:
-        if not os.path.exists(FUNDS_FILE):
-            print(f"Warning: Funds file not found at {FUNDS_FILE}")
-            return []
-        with open(FUNDS_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
+    SYSTEM_TITLE = "盘前情报系统启动"
+    FAILURE_SUFFIX = "分析失败"
 
-    # =========================================================================
-    # Source Tracking Utilities
-    # =========================================================================
-    
-    def _reset_sources(self):
-        """每次分析新基金前重置来源列表"""
-        self.sources = []
-    
-    def _add_source(self, category: str, title: str, url: str = None, source_name: str = None):
-        """添加一个数据来源"""
-        source_entry = {
-            'category': category,  # e.g., '宏观新闻', '持仓公告', '研报', '政策'
-            'title': title[:100] if title else 'N/A',
-            'url': url,
-            'source': source_name
-        }
-        # 避免重复
-        if not any(s['title'] == source_entry['title'] and s['url'] == source_entry['url'] for s in self.sources):
-            self.sources.append(source_entry)
-    
-    def _format_sources(self) -> str:
-        """格式化数据来源为报告附录"""
-        if not self.sources:
-            return ""
-        
-        output = []
-        output.append("\n\n---")
-        output.append("\n## 📚 数据来源 (Sources Used in This Report)")
-        
-        # 按类别分组
-        categories = {}
-        for source in self.sources:
-            cat = source['category']
-            if cat not in categories:
-                categories[cat] = []
-            categories[cat].append(source)
-        
-        # 格式化输出
-        for cat, items in categories.items():
-            output.append(f"\n### {cat}")
-            for i, item in enumerate(items, 1):
-                title = item['title']
-                url = item['url']
-                source_name = item.get('source', '')
-                
-                if url:
-                    output.append(f"{i}. [{title}]({url})")
-                else:
-                    source_suffix = f" - {source_name}" if source_name else ""
-                    output.append(f"{i}. {title}{source_suffix}")
-        
-        # 固定数据源说明
-        output.append("\n### 📊 市场数据来源")
-        output.append("- AkShare: A股指数、北向资金、行业资金流向")
-        output.append("- 东方财富: 基金持仓数据")
-        output.append("- Tavily Search API: 实时新闻与研报搜索")
-        
-        return "\n".join(output)
+    def __init__(self):
+        super().__init__()
+
+    def _market_data_sources_section_lines(self) -> List[str]:
+        return [
+            "- AkShare: A股指数、北向资金、行业资金流向",
+            "- 东方财富: 基金持仓数据",
+            "- Tavily Search API: 实时新闻与研报搜索",
+        ]
 
     # =========================================================================
     # Layer 1: 全球宏观数据收集
@@ -150,7 +89,7 @@ class PreMarketAnalyst:
                         output.append(f"- 夜盘涨跌: {a50_data['夜盘涨跌幅']}%")
                 else:
                     # 新格式：多个亚太指数
-                    output.append("\n**亚太市场指数:**")
+                    output.append("\n**亚太市场指数 (A50参考):**")
                     for idx_name, idx_data in a50_data.items():
                         if isinstance(idx_data, dict):
                             price = idx_data.get('最新价', 'N/A')
@@ -405,6 +344,9 @@ class PreMarketAnalyst:
             policy_news=policy_news,
             report_date=self.today  # 传入实际日期
         )
+
+
+        print("DEBUG: Prompt constructed for LLM:", prompt)        
         
         # 调用LLM生成报告
         report = self.llm.generate_content(prompt)
@@ -417,38 +359,6 @@ class PreMarketAnalyst:
         print(f"  📚 收集到 {len(self.sources)} 个数据来源")
         print("  ✅ 分析完成")
         return report
-
-    def run_all(self) -> str:
-        """
-        运行所有基金的盘前分析
-        """
-        print(f"\n{'#'*60}")
-        print(f"# 盘前情报系统启动 - {self.today}")
-        print(f"# 待分析基金数量: {len(self.funds)}")
-        print(f"{'#'*60}")
-        
-        reports = []
-        for fund in self.funds:
-            try:
-                report = self.analyze_fund(fund)
-                if report:
-                    reports.append(report)
-            except Exception as e:
-                print(f"  ❌ 分析失败: {e}")
-                reports.append(f"## {fund.get('name')} 分析失败\n错误: {str(e)}")
-        
-        return "\n\n---\n\n".join(reports)
-
-    def run_one(self, fund_code: str) -> str:
-        """
-        运行指定基金的盘前分析
-        """
-        target_fund = next((f for f in self.funds if f["code"] == fund_code), None)
-        if not target_fund:
-            return f"Error: Fund with code {fund_code} not found in configuration."
-        
-        return self.analyze_fund(target_fund)
-
 
 if __name__ == "__main__":
     analyst = PreMarketAnalyst()

@@ -113,31 +113,6 @@ def get_a50_futures() -> Dict:
                         '涨跌幅': r.get('涨跌幅', 'N/A'),
                         '更新时间': r.get('最新行情时间', 'N/A')
                     }
-        
-        # 方案2：尝试从SGX获取A50结算价（作为参考）
-        if not result:
-            try:
-                from datetime import datetime, timedelta
-                # 获取最近交易日
-                for i in range(5):
-                    date_str = (datetime.now() - timedelta(days=i)).strftime('%Y%m%d')
-                    try:
-                        sgx_df = ak.futures_settlement_price_sgx(date=date_str)
-                        if not sgx_df.empty:
-                            cn_data = sgx_df[sgx_df['COM'] == 'CN']
-                            if not cn_data.empty:
-                                latest = cn_data.iloc[0]
-                                result['富时A50(SGX结算价)'] = {
-                                    '日期': date_str,
-                                    '结算价': latest.get('SETTLE', 'N/A'),
-                                    '收盘价': latest.get('CLOSE', 'N/A')
-                                }
-                                break
-                    except:
-                        continue
-            except Exception as e:
-                print(f"SGX A50 fallback failed: {e}")
-                
     except Exception as e:
         print(f"Error fetching A50/Asia index: {e}")
     
@@ -396,10 +371,30 @@ def get_fund_info(fund_code: str):
     try:
         # Fetching net value history
         df = ak.fund_open_fund_info_em(symbol=fund_code, indicator="单位净值走势")
+
+        if df is None or df.empty:
+            return pd.DataFrame()
+
         # Expected columns: 净值日期, 单位净值, 日增长率
+        # NOTE: Some environments may return mojibake column names (encoding issues).
+        # To keep downstream logic stable, normalize columns when we can.
+        if '净值日期' not in df.columns:
+            cols = list(df.columns)
+            if len(cols) >= 3:
+                df = df.rename(
+                    columns={
+                        cols[0]: '净值日期',
+                        cols[1]: '单位净值',
+                        cols[2]: '日增长率',
+                    }
+                )
+
         # Sort by date descending so iloc[0] is the latest NAV
-        if not df.empty and '净值日期' in df.columns:
+        if '净值日期' in df.columns:
+            df['净值日期'] = pd.to_datetime(df['净值日期'], errors='coerce')
             df = df.sort_values('净值日期', ascending=False).reset_index(drop=True)
+            # Keep a consistent display format
+            df['净值日期'] = df['净值日期'].dt.date
         return df
     except Exception as e:
         print(f"Error fetching fund info for {fund_code}: {e}")
@@ -461,18 +456,35 @@ def get_market_indices():
     """
     indices = {
         "sh000001": "上证指数",
-        "sz399006": "创业板指"
+        "sz399006": "创业板指数",
     }
     
-    market_data = {}
+    market_data: Dict[str, Dict] = {}
     try:
         for symbol, name in indices.items():
             # stock_zh_index_daily_em returns historical data
             df = ak.stock_zh_index_daily_em(symbol=symbol)
             if not df.empty:
                 # Get the last row (most recent trading day)
-                latest = df.iloc[-1].to_dict()
-                market_data[name] = latest
+                latest_row = df.iloc[-1]
+                close = latest_row.get('close', None)
+                trade_date = latest_row.get('date', None)
+
+                pct_change = None
+                if len(df) >= 2:
+                    prev_close = df.iloc[-2].get('close', None)
+                    try:
+                        if prev_close not in (None, 0) and close is not None:
+                            pct_change = (float(close) / float(prev_close) - 1.0) * 100.0
+                    except Exception:
+                        pct_change = None
+
+                # Normalize fields to what the analyst code expects
+                market_data[name] = {
+                    '日期': trade_date,
+                    '收盘': close,
+                    '涨跌幅': (round(pct_change, 2) if pct_change is not None else 'N/A'),
+                }
         return market_data
     except Exception as e:
         print(f"Error fetching market indices: {e}")

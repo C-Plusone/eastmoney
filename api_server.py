@@ -13,6 +13,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from src.analysis.pre_market import PreMarketAnalyst
 from src.analysis.post_market import PostMarketAnalyst
+from src.analysis.sentiment.dashboard import SentimentDashboard
 from src.data_sources.akshare_api import search_funds
 from src.storage.db import init_db, get_active_funds, get_all_funds, upsert_fund, delete_fund, get_fund_by_code
 from src.scheduler.manager import scheduler_manager
@@ -24,7 +25,6 @@ from datetime import datetime
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    print("Initializing Database...")
     init_db()
     print("Starting Scheduler...")
     scheduler_manager.start()
@@ -196,7 +196,12 @@ async def list_reports():
 
 @app.get("/api/reports/{filename}")
 async def get_report(filename: str):
+    # Try root report dir first
     filepath = os.path.join(REPORT_DIR, filename)
+    if not os.path.exists(filepath):
+        # Try sentiment subdir
+        filepath = os.path.join(REPORT_DIR, "sentiment", filename)
+    
     if not os.path.exists(filepath):
         raise HTTPException(status_code=404, detail="Report not found")
     
@@ -402,6 +407,71 @@ async def update_settings(settings: SettingsUpdate):
         
     save_env_file(updates)
     return {"status": "success"}
+
+@app.post("/api/sentiment/analyze")
+async def analyze_sentiment():
+    try:
+        dashboard = SentimentDashboard()
+        # This might take time, ideally should be async or background task if very slow.
+        # For now, synchronous call is acceptable for a single user tool.
+        report = dashboard.run_analysis()
+        
+        # Save to file as well (optional, but good for history)
+        sentiment_dir = os.path.join(REPORT_DIR, "sentiment")
+        if not os.path.exists(sentiment_dir):
+            os.makedirs(sentiment_dir)
+            
+        filename = f"sentiment_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+        filepath = os.path.join(sentiment_dir, filename)
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(report)
+            
+        return {"report": report, "filename": filename}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/sentiment/reports")
+async def list_sentiment_reports():
+    sentiment_dir = os.path.join(REPORT_DIR, "sentiment")
+    if not os.path.exists(sentiment_dir):
+        return []
+    
+    reports = []
+    files = glob.glob(os.path.join(sentiment_dir, "sentiment_*.md"))
+    files.sort(key=os.path.getmtime, reverse=True)
+    
+    for f in files:
+        filename = os.path.basename(f)
+        try:
+            # Format 1: sentiment_YYYYMMDD_HHMMSS.md -> parts len = 3
+            # Format 2: sentiment_YYYYMMDD.md -> parts len = 2
+            
+            parts = filename.replace(".md", "").split("_")
+            date_str = ""
+            time_str = ""
+            
+            if len(parts) >= 3:
+                date_str = parts[1]
+                time_str = parts[2]
+                formatted_time = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]} {time_str[:2]}:{time_str[2:4]}"
+            elif len(parts) == 2:
+                date_str = parts[1]
+                formatted_time = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
+            else:
+                continue
+
+            reports.append({
+                "filename": filename,
+                "date": formatted_time
+            })
+        except Exception as e:
+            print(f"Skipping {filename}: {e}")
+            continue
+            
+    return reports
+
 
 if __name__ == "__main__":
     import uvicorn

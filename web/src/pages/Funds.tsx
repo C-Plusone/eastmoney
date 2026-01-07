@@ -146,7 +146,7 @@ export default function FundsPage() {
         setFormFocus('');
         // Set Defaults
         setFormPreTime('08:30');
-        setFormPostTime('15:30');
+        setFormPostTime('22:00');
     }
     setOpenDialog(true);
   };

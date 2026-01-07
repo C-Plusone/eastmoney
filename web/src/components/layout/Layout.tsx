@@ -11,11 +11,13 @@ import {
 import PieChartIcon from '@mui/icons-material/PieChart';
 import ArticleIcon from '@mui/icons-material/Article';
 import SettingsIcon from '@mui/icons-material/Settings';
+import AutoGraphIcon from '@mui/icons-material/AutoGraph';
 
 const drawerWidth = 260;
 
 const MENU_ITEMS = [
   { text: 'Universe', icon: <PieChartIcon />, path: '/funds' },
+  { text: 'Sentiment', icon: <AutoGraphIcon />, path: '/sentiment' },
   { text: 'Intelligence', icon: <ArticleIcon />, path: '/reports' },
   { text: 'System', icon: <SettingsIcon />, path: '/settings' },
 ];
@@ -39,15 +41,15 @@ export default function Layout() {
           },
         }}
       >
+      
         <div className="h-20 flex items-center px-6 border-b border-slate-200">
+          <img src="/vite.svg" alt="Logo" className="w-8 h-8 mr-3 shadow-sm rounded-xl" />
           <div className="flex flex-col">
-            <Typography variant="h6" className="tracking-widest font-bold text-slate-900" sx={{ fontFamily: 'JetBrains Mono' }}>
-              EASTMONEY
-              <span className="text-primary-DEFAULT">.PRO</span>
+            <Typography variant="h6" className="tracking-wide font-bold text-slate-900 leading-none" sx={{ fontFamily: 'JetBrains Mono' }}>
+              VIBE
+              <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-500 to-purple-600">ALPHA</span>
             </Typography>
-            <Typography variant="caption" className="text-slate-500 tracking-wider text-[0.65rem]">
-              INTELLIGENCE TERMINAL
-            </Typography>
+            
           </div>
         </div>
         

@@ -82,3 +82,23 @@ export const fetchSettings = async (): Promise<SettingsData> => {
 export const saveSettings = async (settings: SettingsUpdate): Promise<void> => {
   await axios.post(`${API_BASE}/settings`, settings);
 };
+
+export interface SentimentResponse {
+  report: string;
+  filename: string;
+}
+
+export const runSentimentAnalysis = async (): Promise<SentimentResponse> => {
+  const response = await axios.post(`${API_BASE}/sentiment/analyze`);
+  return response.data;
+};
+
+export interface SentimentReportItem {
+  filename: string;
+  date: string;
+}
+
+export const fetchSentimentReports = async (): Promise<SentimentReportItem[]> => {
+  const response = await axios.get(`${API_BASE}/sentiment/reports`);
+  return response.data;
+};

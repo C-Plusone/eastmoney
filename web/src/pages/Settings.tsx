@@ -88,11 +88,11 @@ export default function SettingsPage() {
   return (
     <div className="max-w-4xl mx-auto py-12 px-6">
       {/* Header */}
-      <div className="mb-10 text-center">
-        <Typography variant="h4" className="text-slate-900 font-extrabold tracking-tight mb-2">
+      <div className="mb-10">
+        <Typography variant="h4" align="center" className="text-slate-900 font-extrabold tracking-tight mb-2">
             System Configuration
         </Typography>
-        <Typography variant="body1" className="text-slate-500 max-w-xl mx-auto">
+        <Typography variant="body1" align="center" className="text-slate-500 max-w-xl mx-auto">
             Manage your AI intelligence providers and external data connections. 
             Keys are stored securely in your local environment.
         </Typography>
